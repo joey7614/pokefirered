@@ -5,6 +5,8 @@
 #include "quest_log.h"
 #include "script.h"
 #include "text_window.h"
+#include "string_util.h"
+#include "openclaw_ai.h"
 
 static EWRAM_DATA u8 sMessageBoxType = 0;
 
@@ -62,12 +64,43 @@ static void DestroyTask_DrawFieldMessageBox(void)
         DestroyTask(taskId);
 }
 
+#define OPENCLAW_TIMEOUT_FRAMES 600  // 10 seconds at 60 fps
+
+static void Task_OpenClawWaitForAI(u8 taskId)
+{
+    s16 *frames = &gTasks[taskId].data[0];
+    (*frames)++;
+
+    // Player stays locked (sMessageBoxType = FIELD_MESSAGE_BOX_NORMAL from ShowFieldMessage).
+    // No intermediate dialog — just wait silently until AI responds or timeout.
+
+    if (gOpenClawIPC.response_ready)
+    {
+        StringCopyN(gStringVar4, gOpenClawIPC.ai_text, OPENCLAW_TEXT_SIZE);
+        gOpenClawIPC.response_ready = 0;
+        StartDrawFieldMessageBox();
+        DestroyTask(taskId);
+        return;
+    }
+
+    if (*frames >= OPENCLAW_TIMEOUT_FRAMES)
+    {
+        StringCopyN(gStringVar4, gOpenClawIPC.npc_orig_text, OPENCLAW_TEXT_SIZE);
+        gOpenClawIPC.request_ready = 0;
+        StartDrawFieldMessageBox();
+        DestroyTask(taskId);
+    }
+}
+
 bool8 ShowFieldMessage(const u8 *str)
 {
     if (sMessageBoxType != FIELD_MESSAGE_BOX_HIDDEN)
         return FALSE;
-    ExpandStringAndStartDrawFieldMessageBox(str);
+    StringCopyN(gOpenClawIPC.npc_orig_text, str, OPENCLAW_TEXT_SIZE - 1);
+    gOpenClawIPC.npc_orig_text[OPENCLAW_TEXT_SIZE - 1] = 0xFF;
+    gOpenClawIPC.request_ready = 1;
     sMessageBoxType = FIELD_MESSAGE_BOX_NORMAL;
+    CreateTask(Task_OpenClawWaitForAI, 80);
     return TRUE;
 }
 
